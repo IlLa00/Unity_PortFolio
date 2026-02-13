@@ -39,11 +39,12 @@ DataManager → ResourceManager (Resources.LoadAll)
 ```
 
 #### 개요
-13명의 팀원이 각자 다른 데이터 시트를 사용하는 환경에서, 에디터 인스펙터의 **버튼 클릭 한 번**으로 Google Sheets의 데이터를 ScriptableObject에 동기화하는 시스템입니다. **Adapter 패턴**으로 데이터 소스를 추상화하여 향후 다른 소스(JSON API, Firebase 등)로의 확장이 가능하도록 설계했습니다.
+13명의 팀원이 각자 다른 데이터 시트를 사용하는 환경에서, 에디터 인스펙터의 **버튼 클릭 한 번**으로 Google Sheets의 데이터를 ScriptableObject에 동기화하는 시스템입니다. **Adapter 패턴**으로 데이터 소스를 추상화하여 향후 다른 소스(JSON API, Firebase 등)로의 확장이 가능하도록 설계했습니다.                
 <img width="462" height="381" alt="image" src="https://github.com/user-attachments/assets/56ccda77-a262-41f2-ad20-56982e0094c4" />
 
 #### 기술적 특징
-- **IDataSourceAdapter 인터페이스** : 데이터 소스를 추상화하여 CSV 외 다른 형식으로의 확장을 열어두었습니다. 현재는 CSVDataSourceAdapter가 Google Sheets의 CSV Export URL을 UnityWebRequest로 비동기 로드합니다.
+- **IDataSourceAdapter 인터페이스** : 현재는 Google Sheets CSV만 사용하지만, 향후 데이터베이스 등 다른 데이터 소스로 전환할 가능성을 고려하여 처음부터 Adapter 패턴으로 추상화했습니다.
+데이터 소스마다 로드 방식(HTTP 요청, DB 쿼리 등)과 파싱 형식(CSV, JSON 등)이 다르지만, Adapter 패턴을 사용하면 각 소스의 차이를 어댑터 내부에 캡슐화하여 BaseStaticDataLoader가 소스 종류를 알 필요 없이 동일한 IDataSourceAdapter 인터페이스로 호출할 수 있습니다. 덕분에 새로운 데이터 소스가 추가되어도 기존의 로드/파싱 로직을 수정하지 않고 어댑터 클래스 하나만 추가하면 됩니다.       
 - **ColumnAttribute + 리플렉션 자동 매핑** : 팀원이 데이터 클래스 필드에 `[Column("시트_컬럼명")]` 어트리뷰트만 붙이면, CSVDataSourceAdapter가 리플렉션으로 헤더와 필드를 자동 매핑합니다. int, float, string, bool, Enum 등 다양한 타입을 지원합니다.
 - **ICustomFieldSupport** : `[Column]`으로 매핑되지 않은 나머지 컬럼들을 `Dictionary<string, string>`에 자동 수집합니다. 기획자가 시트에 새 컬럼을 추가해도 코드 수정 없이 데이터가 보존됩니다.
 - **에디터 커스텀 인스펙터** : `BaseStaticDataReaderEditor`에서 "데이터 읽기" 버튼을 제공합니다. 에디터 환경에서는 코루틴을 직접 실행할 수 없으므로, `async/await`로 `IEnumerator`를 래핑하는 `ProcessCoroutine` 메서드를 구현하여 에디터에서도 비동기 웹 요청이 동작하도록 했습니다.
