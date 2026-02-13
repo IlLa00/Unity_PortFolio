@@ -43,8 +43,7 @@ DataManager → ResourceManager (Resources.LoadAll)
 <img width="462" height="381" alt="image" src="https://github.com/user-attachments/assets/56ccda77-a262-41f2-ad20-56982e0094c4" />
 
 #### 기술적 특징
-- **IDataSourceAdapter 인터페이스** : 현재는 Google Sheets CSV만 사용하지만, 향후 데이터베이스 등 다른 데이터 소스로 전환할 가능성을 고려하여 처음부터 Adapter 패턴으로 추상화했습니다.
-데이터 소스마다 로드 방식(HTTP 요청, DB 쿼리 등)과 파싱 형식(CSV, JSON 등)이 다르지만, Adapter 패턴을 사용하면 각 소스의 차이를 어댑터 내부에 캡슐화하여 BaseStaticDataLoader가 소스 종류를 알 필요 없이 동일한 IDataSourceAdapter 인터페이스로 호출할 수 있습니다. 덕분에 새로운 데이터 소스가 추가되어도 기존의 로드/파싱 로직을 수정하지 않고 어댑터 클래스 하나만 추가하면 됩니다.       
+- **IDataSourceAdapter 인터페이스** :  향후 데이터베이스 등 다른 소스로의 전환을 고려하여 처음부터 Adapter 패턴으로 데이터 소스를 추상화했습니다. 소스마다 로드 방식(HTTP, DB 쿼리)과 파싱 형식(CSV, JSON)이 다르지만, 이 차이를 어댑터 내부에 캡슐화하면 BaseStaticDataLoader가 소스 종류를 알 필요 없이 동일한 인터페이스로 호출할 수 있습니다. 결과적으로 새로운 데이터 소스 추가 시 어댑터 클래스 하나만 구현하면 기존 로직 수정이 불필요합니다.      
 - **ColumnAttribute + 리플렉션 자동 매핑** : 팀원이 데이터 클래스 필드에 `[Column("시트_컬럼명")]` 어트리뷰트만 붙이면, CSVDataSourceAdapter가 리플렉션으로 헤더와 필드를 자동 매핑합니다. int, float, string, bool, Enum 등 다양한 타입을 지원합니다.
 - **ICustomFieldSupport** : `[Column]`으로 매핑되지 않은 나머지 컬럼들을 `Dictionary<string, string>`에 자동 수집합니다. 기획자가 시트에 새 컬럼을 추가해도 코드 수정 없이 데이터가 보존됩니다.
 - **에디터 커스텀 인스펙터** : `BaseStaticDataReaderEditor`에서 "데이터 읽기" 버튼을 제공합니다. 에디터 환경에서는 코루틴을 직접 실행할 수 없으므로, `async/await`로 `IEnumerator`를 래핑하는 `ProcessCoroutine` 메서드를 구현하여 에디터에서도 비동기 웹 요청이 동작하도록 했습니다.
@@ -178,7 +177,7 @@ public class BaseStaticDataReaderEditor : Editor
 ### 2. 커스텀 필드 기반 확장 가능한 공용 인벤토리 시스템
 
 #### 개요
-5개 게임이 각자 다른 아이템 속성(무기 공격력, 소비 아이템 회복량, 재료 등급 등)을 가지면서도 **하나의 공통 인벤토리 시스템**을 사용할 수 있도록 설계한 시스템입니다. `IItemable` 인터페이스로 아이템의 공통 계약을 정의하고, `Dictionary<string, string>` 기반의 커스텀 필드로 게임별 고유 속성을 확장합니다.
+5개 게임이 각자 다른 아이템 속성을 가지면서도 **하나의 공통 인벤토리 시스템**을 사용할 수 있도록 설계한 시스템입니다. `IItemable` 인터페이스로 아이템의 공통 계약을 정의하고, `Dictionary<string, string>` 기반의 커스텀 필드로 게임별 고유 속성을 확장합니다.
 
 #### 시스템 구조
 ```
@@ -351,26 +350,26 @@ public class Inventory : BaseRuntimeData, ISerializationCallbackReceiver
 #### 수행 내용
 - **코드 리뷰** : 모든 PR에 대해 코드 리뷰를 수행하여 프레임워크 규약 준수 여부와 코드 품질을 검증했습니다.
 - **머지 전략** : 각 게임팀의 작업이 서로 충돌하지 않도록 브랜치 전략을 수립하고, 충돌 발생 시 해결을 지원했습니다.
-- **시스템 사용 가이드** : 프레임워크 시스템(데이터 연동, 인벤토리, Stage 등)의 사용법을 문서화하여 팀원들에게 제공했습니다.            
-https://www.notion.so/Project-LUP-299894b38b10818bac41e103ee63d3a9         
-https://www.notion.so/LUP-2c0894b38b108039a1fbf7eaafc7e50d
+- **시스템 사용 가이드** : 프레임워크 시스템(데이터 연동, 인벤토리, Stage 등)의 사용법을 문서화하여 팀원들에게 제공했습니다.
+     
+- [Project LUP 프레임워크 사용 가이드 (Notion)](https://www.notion.so/Project-LUP-299894b38b10818bac41e103ee63d3a9)
+- [인벤토리 시스템 문서 (Notion)](https://www.notion.so/LUP-2c0894b38b108039a1fbf7eaafc7e50d)
 
 ## 🔧 트러블슈팅
-
 ### JsonUtility의 Dictionary 미지원으로 인한 인벤토리 직렬화 문제
-인벤토리 시스템을 JSON으로 저장/로드하는 과정에서, `Dictionary<string, InventorySlot>`이 `JsonUtility.ToJson()`에서 빈 객체로 직렬화되는 문제를 발견했습니다.
-원인을 분석한 결과, Unity의 `JsonUtility`는 `Dictionary` 타입을 직렬화하지 않는다는 것을 확인했습니다.
-이를 해결하기 위해 `ISerializationCallbackReceiver` 인터페이스를 구현하여, `OnBeforeSerialize`에서 Dictionary를 `List<InventorySlotData>`로 변환하고, 로드 시 `InitializeFromJson`에서 `ItemManager`를 통해 아이템 참조를 재연결하며 Dictionary를 복원하는 2단계 직렬화 구조를 설계했습니다.
-이 과정에서 "처음부터 List만 사용하면 되지 않았을까?"라는 의문이 들었으나, 런타임에서 아이템 조회/추가/삭제의 빈도가 높아 `O(1)` 접근이 가능한 Dictionary의 사용을 유지하기로 결정했습니다.
-대신, 직렬화 시에만 List로 변환하여 `JsonUtility` 호환성과 런타임 성능을 모두 확보하는 구조를 채택했습니다.
+인벤토리 시스템을 저장/로드하는 과정에서, `Dictionary<string, InventorySlot>`이 `JsonUtility.ToJson()`에서 빈 객체로 직렬화되는 문제를 발견했습니다.                    
+원인을 분석한 결과, Unity의 `JsonUtility`는 `Dictionary` 타입을 직렬화하지 않는다는 것을 확인했습니다.                      
+이를 해결하기 위해 `ISerializationCallbackReceiver` 인터페이스를 구현하여, Dictionary를 List로 변환하고, 로드 시 `ItemManager`를 통해 아이템 참조를 재연결하며 Dictionary를 복원하는 2단계 직렬화 구조를 설계했습니다.                            
+이 과정에서 "처음부터 List만 사용하면 되지 않았을까?"라는 의문이 들었으나, 런타임에서 아이템 조회/추가/삭제의 빈도가 높아 `O(1)` 접근이 가능한 Dictionary의 사용을 유지하기로 결정했습니다.                        
+대신, 직렬화 시에만 List로 변환하여 `JsonUtility` 호환성과 런타임 성능을 모두 확보하는 구조를 채택했습니다.                    
 
 ### 5개 게임의 아이템 속성 차이로 인한 인벤토리 확장성 문제
-공용 인벤토리 시스템을 설계하던 중, 각 게임의 아이템이 서로 다른 고유 속성(무기의 공격력, 소비 아이템의 회복량, 재료의 등급 등)을 가지고 있어 하나의 아이템 클래스로 통합할 수 없는 문제에 직면했습니다.
-처음에는 게임별 아이템 클래스를 각각 만드는 방안을 고려했으나, 이 경우 인벤토리 시스템이 게임별 타입에 종속되어 공용성을 잃게 됩니다.
-이를 해결하기 위해 **필수 필드 + 커스텀 필드 분리 구조**를 도입했습니다. `LUPItemData`에 모든 게임이 공통으로 사용하는 필드(ID, 이름, 타입, 스택)를 정의하고, 게임별 고유 속성은 `Dictionary<string, string>` 형태의 커스텀 필드에 저장합니다.
-또한, `ICustomFieldSupport` 인터페이스를 통해 Google Sheets에서 `[Column]`으로 매핑되지 않은 나머지 컬럼들이 자동으로 커스텀 필드에 수집되도록 하여, **기획자가 시트에 새 컬럼을 추가해도 프레임워크 코드 수정 없이 데이터가 확장**되는 구조를 완성했습니다.
+공용 인벤토리 시스템을 설계하던 중, 각 게임의 아이템이 서로 다른 고유 속성을 가지고 있어 하나의 아이템 클래스로 통합할 수 없는 문제에 직면했습니다.                           
+처음에는 게임별 아이템 클래스를 각각 만드는 방안을 고려했으나, 이 경우 인벤토리 시스템이 게임별 타입에 종속되어 공용성을 잃게 됩니다.                          
+이를 해결하기 위해 **필수 필드 + 커스텀 필드 분리 구조**를 도입했습니다. `LUPItemData`에 모든 게임이 공통으로 사용하는 필드(ID, 이름, 타입, 스택)를 정의하고, 게임별 고유 속성은 `Dictionary<string, string>` 형태의 커스텀 필드에 저장합니다.         
+또한, `ICustomFieldSupport` 인터페이스를 통해 Google Sheets에서 `[Column]`으로 매핑되지 않은 나머지 컬럼들이 자동으로 커스텀 필드에 수집되도록 하여, **시트에 새 컬럼을 추가해도 프레임워크 코드 수정 없이 데이터가 확장**되는 구조를 완성했습니다.            
 
 ### 에디터 환경에서의 코루틴 실행 불가 문제
-Google Sheets 데이터 연동 시스템을 구현하던 중, 에디터의 커스텀 인스펙터에서 "데이터 읽기" 버튼을 클릭했을 때 `UnityWebRequest` 기반 코루틴이 실행되지 않는 문제를 발견했습니다.
-원인을 분석한 결과, `StartCoroutine`은 `MonoBehaviour`의 `Update` 루프에 의존하는데, 에디터 인스펙터 컨텍스트에서는 게임 루프가 동작하지 않아 코루틴이 진행되지 않는 것을 확인했습니다.
-이를 해결하기 위해 `async/await` 패턴으로 `IEnumerator`를 래핑하는 `ProcessCoroutine` 메서드를 구현했습니다. 이 메서드는 `MoveNext()`로 코루틴을 수동 진행하면서, `UnityWebRequestAsyncOperation`이 반환될 경우 `isDone`을 폴링하는 방식으로 비동기 웹 요청을 처리합니다. 중첩된 코루틴도 재귀적으로 처리하여 어떤 깊이의 코루틴도 에디터에서 정상 동작하도록 했습니다.
+데이터 연동 시스템을 구현하던 중, 에디터의 커스텀 인스펙터에서 "데이터 읽기" 버튼을 클릭했을 때 `UnityWebRequest` 기반 코루틴이 실행되지 않는 문제를 발견했습니다.                     
+원인을 분석한 결과, `StartCoroutine`은 `MonoBehaviour`의 `Update` 루프에 의존하는데, 에디터 인스펙터 컨텍스트에서는 게임 루프가 동작하지 않아 코루틴이 진행되지 않는 것을 확인했습니다.                   
+이를 해결하기 위해 `async/await` 패턴으로 `IEnumerator`를 래핑하는 `ProcessCoroutine` 메서드를 구현했습니다. 이 메서드는 `MoveNext()`로 코루틴을 수동 진행하면서, `UnityWebRequestAsyncOperation`이 반환될 경우 `isDone`을 폴링하는 방식으로 비동기 웹 요청을 처리합니다. 중첩된 코루틴도 재귀적으로 처리하여 어떤 깊이의 코루틴도 에디터에서 정상 동작하도록 했습니다.           
