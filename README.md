@@ -16,51 +16,39 @@
 - **버전 관리**: Fork
 - **문서화**: Notion
 
-## 🎯 담당 업무
-1. [**Google Sheets 데이터 연동 시스템**](#1-adapter-패턴과-리플렉션을-이용한-google-sheets-데이터-연동-시스템) - Adapter 패턴 기반 외부 데이터 파이프라인
-2. [**Stage 전환 관리 시스템**](#2-코루틴-기반-비동기-stage-전환-시스템) - 코루틴 기반 비동기 전환 파이프라인과 Template Method 패턴의 Stage 생명주기
-3. [**공용 인벤토리 시스템**](#3-커스텀-필드-기반-확장-가능한-공용-인벤토리-시스템) - 5개 게임이 공유하는 확장 가능한 아이템 관리
-4. [**Pull Request 관리**](#4-pull-request-관리) - 13명 팀원의 코드 리뷰 및 머지 관리
+> 5개 게임(로그라이크, 덱 전략, 생산/건설/강화, 익스트랙션 슈터, 슈팅)이 하나의 프로젝트 안에서 공통 프레임워크를 공유하는 구조
 
-## 💡 핵심 구현 내용
-### 1. Adapter 패턴과 리플렉션을 이용한 Google Sheets 데이터 연동 시스템
+**[프로젝트 저장소](https://github.com/project-lup/projectlup-v2025)** | **[프레임워크 가이드 (Notion)](https://www.notion.so/Project-LUP-299894b38b10818bac41e103ee63d3a9)** | **[인벤토리 문서 (Notion)](https://www.notion.so/LUP-2c0894b38b108039a1fbf7eaafc7e50d)**
 
-#### 데이터 파이프라인 구조
-```
-Google Sheets (기획자/팀원 수치 관리)
-    ↓ CSV Export URL
-UnityWebRequest 비동기 로드
-    ↓ CSVDataSourceAdapter
-CSVParser (RFC 4180 따옴표 처리)
-    ↓ ColumnAttribute 리플렉션 매핑
-BaseStaticDataLoader<T> (ScriptableObject)
-    ↓ 에디터 "데이터 읽기" 버튼
-List<T> DataList (직렬화된 데이터)
-    ↓ Runtime
-DataManager → ResourceManager (Resources.LoadAll)
-```
+---
 
-#### 개요
-13명의 팀원이 각자 다른 데이터 시트를 사용하는 환경에서, 에디터 인스펙터의 **버튼 클릭 한 번**으로 Google Sheets의 데이터를 ScriptableObject에 동기화하는 시스템입니다. **Adapter 패턴**으로 데이터 소스를 추상화하여 향후 다른 소스(JSON API, Firebase 등)로의 확장이 가능하도록 설계했습니다.
+## 담당 시스템
+1. [Google Sheets 데이터 연동 시스템](#1-google-sheets-데이터-연동-시스템)
+2. [Stage 전환 관리 시스템](#2-stage-전환-관리-시스템)
+3. [공용 인벤토리 시스템](#3-공용-인벤토리-시스템)
 
-#### 기술적 특징
-- **IDataSourceAdapter 인터페이스** :  향후 데이터베이스 등 다른 소스로의 전환을 고려하여 처음부터 Adapter 패턴으로 데이터 소스를 추상화했습니다. 소스마다 로드 방식(HTTP, DB 쿼리)과 파싱 형식(CSV, JSON)이 다르지만, 이 차이를 어댑터 내부에 캡슐화하면 BaseStaticDataLoader가 소스 종류를 알 필요 없이 동일한 인터페이스로 호출할 수 있습니다. 결과적으로 새로운 데이터 소스 추가 시 어댑터 클래스 하나만 구현하면 기존 로직 수정이 불필요합니다.
-- **ColumnAttribute + 리플렉션 자동 매핑** : 팀원이 데이터 클래스 필드에 `[Column("시트_컬럼명")]` 어트리뷰트만 붙이면, CSVDataSourceAdapter가 리플렉션으로 헤더와 필드를 자동 매핑합니다. int, float, string, bool, Enum 등 다양한 타입을 지원합니다.
-- **ICustomFieldSupport** : `[Column]`으로 매핑되지 않은 나머지 컬럼들을 `Dictionary<string, string>`에 자동 수집합니다. 기획자가 시트에 새 컬럼을 추가해도 코드 수정 없이 데이터가 보존됩니다.
-- **에디터 커스텀 인스펙터** : `BaseStaticDataReaderEditor`에서 "데이터 읽기" 버튼을 제공합니다. 에디터 환경에서는 코루틴을 직접 실행할 수 없으므로, `async/await`로 `IEnumerator`를 래핑하는 `ProcessCoroutine` 메서드를 구현하여 에디터에서도 비동기 웹 요청이 동작하도록 했습니다.
+---
+
+## 1. Google Sheets 데이터 연동 시스템
+
+### Adapter 패턴 - 데이터 소스 추상화
 
 <details>
-<summary><b>🔍 코드 — IDataSourceAdapter & CSVDataSourceAdapter</b></summary>
+<summary><b>IDataSourceAdapter</b></summary>
 
 ```csharp
-// 데이터 소스 추상화 인터페이스
 public interface IDataSourceAdapter
 {
     IEnumerator LoadData(string url, System.Action<string> onSuccess, System.Action<string> onError);
     List<T> ParseToObjects<T>(string rawData, int startRow) where T : new();
 }
+```
+</details>
 
-// CSV 어댑터 구현 — 리플렉션 기반 자동 매핑
+<details>
+<summary><b>CSVDataSourceAdapter - 리플렉션 기반 자동 매핑</b></summary>
+
+```csharp
 public class CSVDataSourceAdapter : IDataSourceAdapter
 {
     public IEnumerator LoadData(string url, System.Action<string> onSuccess, System.Action<string> onError)
@@ -72,6 +60,28 @@ public class CSVDataSourceAdapter : IDataSourceAdapter
             onError?.Invoke(www.error);
         else
             onSuccess?.Invoke(www.downloadHandler.text);
+    }
+
+    public List<T> ParseToObjects<T>(string csvData, int startRow) where T : new()
+    {
+        string[] lines = CSVParser.SplitLines(csvData);
+        int headerIndex = startRow - 1;
+
+        string[] headers = CSVParser.ParseLine(lines[headerIndex]);
+        Dictionary<string, int> headerMap = new Dictionary<string, int>();
+        for (int i = 0; i < headers.Length; i++)
+            headerMap[headers[i].Trim()] = i;
+
+        List<T> dataList = new List<T>();
+
+        for (int i = headerIndex + 1; i < lines.Length; i++)
+        {
+            if (string.IsNullOrWhiteSpace(lines[i])) continue;
+            string[] values = CSVParser.ParseLine(lines[i]);
+            T data = ParseDataRow<T>(values, headerMap);
+            if (data != null) dataList.Add(data);
+        }
+        return dataList;
     }
 
     private T ParseDataRow<T>(string[] values, Dictionary<string, int> headerMap) where T : new()
@@ -90,12 +100,11 @@ public class CSVDataSourceAdapter : IDataSourceAdapter
 
             int columnIndex = headerMap[headerName];
             mappedColumns.Add(headerName);
-
             string value = values[columnIndex].Trim();
             SetFieldValue(field, instance, value);
         }
 
-        // 매핑되지 않은 컬럼 자동 수집 (ICustomFieldSupport)
+        // [Column]으로 매핑되지 않은 나머지 컬럼 → 커스텀 필드에 자동 수집
         if (instance is LUP.ICustomFieldSupport customFieldSupport)
         {
             foreach (var header in headerMap)
@@ -109,18 +118,31 @@ public class CSVDataSourceAdapter : IDataSourceAdapter
                 }
             }
         }
-
         return instance;
+    }
+
+    private void SetFieldValue(FieldInfo field, object instance, string value)
+    {
+        if (field.FieldType.IsEnum)
+        {
+            if (System.Enum.TryParse(field.FieldType, value, true, out object enumValue))
+                field.SetValue(instance, enumValue);
+        }
+        else if (field.FieldType == typeof(string)) field.SetValue(instance, value);
+        else if (field.FieldType == typeof(int) && int.TryParse(value, out int intVal))
+            field.SetValue(instance, intVal);
+        else if (field.FieldType == typeof(float) && float.TryParse(value, out float floatVal))
+            field.SetValue(instance, floatVal);
+        else if (field.FieldType == typeof(bool) && bool.TryParse(value, out bool boolVal))
+            field.SetValue(instance, boolVal);
     }
 }
 ```
 </details>
 
-<details>
-<summary><b>🔍 코드 — ColumnAttribute & 에디터 비동기 래핑</b></summary>
+### ColumnAttribute
 
 ```csharp
-// 컬럼 매핑 어트리뷰트 — 필드에 붙이면 CSV 헤더와 자동 매핑
 [AttributeUsage(AttributeTargets.Field, AllowMultiple = false)]
 public class ColumnAttribute : Attribute
 {
@@ -133,13 +155,79 @@ public class ColumnAttribute : Attribute
         Required = true;
     }
 }
+```
 
-// 에디터에서 코루틴을 실행할 수 없는 문제 해결
-// async/await로 IEnumerator를 래핑하여 UnityWebRequest 대기 처리
+### BaseStaticDataLoader - 어댑터 팩토리 + ScriptableObject 직렬화
+
+<details>
+<summary><b>BaseStaticDataLoader</b></summary>
+
+```csharp
+public abstract class BaseStaticDataLoader : ScriptableObject
+{
+    [SerializeField] public Define.DataSourceType sourceType = Define.DataSourceType.CSV;
+    [SerializeField] public string associatedWorksheet = "";
+    [SerializeField] public int START_ROW = 1;
+
+    public abstract IEnumerator LoadSheet();
+}
+
+public abstract class BaseStaticDataLoader<T> : BaseStaticDataLoader where T : new()
+{
+    [SerializeField] public List<T> DataList = new List<T>();
+    protected abstract string CSV_URL { get; }
+
+    public override IEnumerator LoadSheet()
+    {
+        IDataSourceAdapter adapter = CreateAdapter(sourceType);
+        string url = GetURL(sourceType);
+
+        string rawData = null;
+        string error = null;
+
+        yield return adapter.LoadData(url,
+            data => rawData = data,
+            err => error = err);
+
+        if (!string.IsNullOrEmpty(error)) yield break;
+
+        // 어댑터가 리플렉션으로 CSV → List<T> 자동 변환
+        DataList = adapter.ParseToObjects<T>(rawData, START_ROW);
+    }
+
+    private IDataSourceAdapter CreateAdapter(Define.DataSourceType type)
+    {
+        switch (type)
+        {
+            case Define.DataSourceType.CSV: return new CSVDataSourceAdapter();
+            default: throw new System.NotImplementedException($"Adapter for {type} not implemented");
+        }
+    }
+}
+```
+</details>
+
+### 에디터 커스텀 인스펙터 - async/await로 코루틴 래핑
+
+<details>
+<summary><b>BaseStaticDataReaderEditor</b></summary>
+
+```csharp
 #if UNITY_EDITOR
 [CustomEditor(typeof(BaseStaticDataLoader), true)]
 public class BaseStaticDataReaderEditor : Editor
 {
+    BaseStaticDataLoader data;
+    void OnEnable() { data = (BaseStaticDataLoader)target; }
+
+    public override void OnInspectorGUI()
+    {
+        base.OnInspectorGUI();
+        GUILayout.Label("\n\n스프레드 시트 읽어오기");
+        if (GUILayout.Button("데이터 읽기"))
+            LoadDataAsync();
+    }
+
     private async void LoadDataAsync()
     {
         IEnumerator coroutine = data.LoadSheet();
@@ -148,24 +236,24 @@ public class BaseStaticDataReaderEditor : Editor
         AssetDatabase.SaveAssets();
     }
 
+    // 에디터에서는 MonoBehaviour.StartCoroutine 사용 불가
+    // → async/await로 IEnumerator를 수동 진행
     private async System.Threading.Tasks.Task ProcessCoroutine(IEnumerator coroutine)
     {
         while (coroutine.MoveNext())
         {
             object current = coroutine.Current;
-            if (current is UnityEngine.Networking.UnityWebRequestAsyncOperation asyncOp)
+            if (current == null)
+                await System.Threading.Tasks.Task.Delay(10);
+            else if (current is IEnumerator nestedCoroutine)
+                await ProcessCoroutine(nestedCoroutine);  // 중첩 코루틴 재귀 처리
+            else if (current is UnityWebRequestAsyncOperation asyncOp)
             {
                 while (!asyncOp.isDone)
                     await System.Threading.Tasks.Task.Delay(100);
             }
-            else if (current is IEnumerator nestedCoroutine)
-            {
-                await ProcessCoroutine(nestedCoroutine); // 중첩 코루틴 재귀 처리
-            }
             else
-            {
                 await System.Threading.Tasks.Task.Delay(10);
-            }
         }
     }
 }
@@ -175,68 +263,38 @@ public class BaseStaticDataReaderEditor : Editor
 
 ---
 
-### 2. 코루틴 기반 비동기 Stage 전환 시스템
-
-#### Stage 전환 파이프라인 구조
-```
-StageManager.LoadStage(targetStageKind)
-    ↓ IsValidTransition() — 전환 테이블 검증
-StartCoroutine(TransitionCoroutine)
-    ├─ OnStageExit()
-    │   ├─ currentStage.OnStageExit() — SaveDatas() 호출
-    │   └─ FadeOut() — CanvasGroup alpha 0→1
-    ├─ SceneManager.LoadSceneAsync(sceneName) — 비동기 씬 로드
-    ├─ FindFirstObjectByType<BaseStage>() — 새 Stage 인스턴스 탐색
-    ├─ OnStageEnter()
-    │   ├─ currentStage.OnStageEnter() — LoadResources() → GetDatas() → ItemManager.LoadAllItems()
-    │   └─ FadeIn() — CanvasGroup alpha 1→0
-    └─ 전환 완료
-```
-
-#### 개요
-5개의 게임 모드가 각각 독립된 Unity Scene으로 존재하는 환경에서, **Stage 간 전환을 코루틴 기반 비동기 파이프라인으로 제어**하는 시스템입니다. `BaseStage` 추상 클래스가 Template Method 패턴으로 Stage 생명주기(Enter → Stay → Exit)를 정의하고, 각 게임 팀은 이를 상속받아 자신의 게임 로직만 구현합니다.
-
-#### 기술적 특징
-- **코루틴 기반 비동기 전환 파이프라인** : Stage 전환의 전체 흐름(Exit → Fade Out → 씬 로드 → Enter → Fade In)을 하나의 코루틴 체인으로 구성했습니다. `SceneManager.LoadSceneAsync()`로 씬을 비동기 로드하여 전환 중 프레임 드랍을 방지하고, `isTransitioning` 플래그로 전환 중 중복 호출을 차단합니다. Fade 연출은 런타임에 동적 생성되는 `CanvasGroup`(sortingOrder 999)으로 처리하며, `DontDestroyOnLoad`로 씬 전환 간 유지됩니다.
-- **Template Method 패턴의 BaseStage 생명주기** : `BaseStage` 추상 클래스가 `OnStageEnter()` → `OnStageStay()` → `OnStageExit()`의 호출 순서를 제어하고, 각 단계에서 실행되는 구체 로직(`LoadResources()`, `GetDatas()`, `SaveDatas()`)을 추상 메서드로 위임합니다. 이 구조 덕분에 각 게임 팀은 프레임워크의 전환 흐름을 이해할 필요 없이 자신의 Stage 클래스에서 리소스 로딩과 데이터 처리만 구현하면 됩니다. 또한 `BaseStage`는 `DataManager`를 통한 런타임 데이터 저장/로드 유틸리티를 제공하여, 게임 팀이 데이터 영속성 로직을 직접 작성하지 않아도 됩니다.
+## 2. Stage 전환 관리 시스템
 
 <details>
-<summary><b>🔍 코드 — StageManager 전환 파이프라인</b></summary>
+<summary><b>StageManager - 전환 테이블 검증 + 코루틴 파이프라인</b></summary>
 
 ```csharp
 public class StageManager : Singleton<StageManager>
 {
-    // StageKind → SceneList 매핑 (ScriptableObject 기반)
     private Dictionary<Define.StageKind, SceneList> sceneNameMap = new Dictionary<Define.StageKind, SceneList>();
+    private List<List<Define.StageKind>> transitionTable = new List<List<Define.StageKind>>();
     private bool isTransitioning = false;
 
-    // Stage 전환 요청 — 전환 테이블 검증 후 코루틴 시작
     public void LoadStage(Define.StageKind targetStageKind, int sceneindex = -1)
     {
-        if (isTransitioning)
-        {
-            Debug.LogWarning("Already transitioning!");
-            return;
-        }
-
-        if (!IsValidTransition(currentStageKind, targetStageKind))
-        {
-            Debug.LogError($"Invalid transition: {currentStageKind} → {targetStageKind}");
-            return;
-        }
-
+        if (isTransitioning) return;
+        if (!IsValidTransition(currentStageKind, targetStageKind)) return;
         StartCoroutine(TransitionCoroutine(targetStageKind, sceneindex));
     }
 
-    // 전환 코루틴 — Exit → Fade Out → 비동기 씬 로드 → Enter → Fade In
+    private bool IsValidTransition(Define.StageKind from, Define.StageKind to)
+    {
+        return transitionTable[(int)from].Contains(to);
+    }
+
     private IEnumerator TransitionCoroutine(Define.StageKind targetStageKind, int sceneindex = -1)
     {
         isTransitioning = true;
 
-        // 현재 Stage 퇴장 처리 (SaveDatas + FadeOut)
+        // Stage Exit (SaveDatas + FadeOut)
         yield return StartCoroutine(OnStageExit());
 
-        // SceneList에서 씬 이름 조회
+        // 씬 이름 조회
         string sceneName = (sceneindex == -1)
             ? sceneNameMap[targetStageKind].sceneNames[0]
             : sceneNameMap[targetStageKind].sceneNames[sceneindex];
@@ -244,9 +302,7 @@ public class StageManager : Singleton<StageManager>
         // 비동기 씬 로드
         AsyncOperation asyncLoad = SceneManager.LoadSceneAsync(sceneName);
         while (!asyncLoad.isDone)
-        {
             yield return new WaitForSeconds(0.1f);
-        }
 
         // 새 Stage 인스턴스 탐색
         currentStageInstance = FindFirstObjectByType<BaseStage>();
@@ -256,18 +312,43 @@ public class StageManager : Singleton<StageManager>
             yield return new WaitForSeconds(0.1f);
         }
 
-        // 새 Stage 진입 처리 (LoadResources + GetDatas + FadeIn)
+        // Stage Enter (LoadResources + GetDatas + FadeIn)
         yield return StartCoroutine(OnStageEnter());
-
         currentStageKind = targetStageKind;
         isTransitioning = false;
+    }
+
+    private IEnumerator FadeOut()
+    {
+        fadeCanvas.blocksRaycasts = true;
+        float elapsed = 0f;
+        while (elapsed < fadeDuration)
+        {
+            elapsed += Time.deltaTime;
+            fadeCanvas.alpha = Mathf.Lerp(0f, 1f, elapsed / fadeDuration);
+            yield return null;
+        }
+        fadeCanvas.alpha = 1f;
+    }
+
+    private IEnumerator FadeIn()
+    {
+        float elapsed = 0f;
+        while (elapsed < fadeDuration)
+        {
+            elapsed += Time.deltaTime;
+            fadeCanvas.alpha = Mathf.Lerp(1f, 0f, elapsed / fadeDuration);
+            yield return null;
+        }
+        fadeCanvas.alpha = 0f;
+        fadeCanvas.blocksRaycasts = false;
     }
 }
 ```
 </details>
 
 <details>
-<summary><b>🔍 코드 — BaseStage Template Method 패턴</b></summary>
+<summary><b>BaseStage - Template Method 패턴 생명주기</b></summary>
 
 ```csharp
 public abstract class BaseStage : MonoBehaviour
@@ -275,7 +356,6 @@ public abstract class BaseStage : MonoBehaviour
     [ReadOnly] public Define.StageKind StageKind = Define.StageKind.Main;
 
     // Template Method — 프레임워크가 호출 순서를 제어
-    // StageManager가 OnStageEnter()를 호출하면 LoadResources → GetDatas → ItemManager 순서로 실행
     public virtual IEnumerator OnStageEnter()
     {
         LoadResources();
@@ -289,7 +369,6 @@ public abstract class BaseStage : MonoBehaviour
         yield return null;
     }
 
-    // StageManager가 OnStageExit()를 호출하면 SaveDatas 실행
     public virtual IEnumerator OnStageExit()
     {
         SaveDatas();
@@ -297,11 +376,11 @@ public abstract class BaseStage : MonoBehaviour
     }
 
     // 각 게임 팀이 구현하는 추상 메서드
-    protected abstract void LoadResources();  // 게임별 리소스 로딩
-    protected abstract void GetDatas();       // 게임별 데이터 주입
-    protected abstract void SaveDatas();      // 게임별 데이터 저장
+    protected abstract void LoadResources();
+    protected abstract void GetDatas();
+    protected abstract void SaveDatas();
 
-    // 데이터 접근 유틸리티 — DataManager 연동
+    // DataManager 연동 유틸리티
     protected void SaveRuntimeData(BaseRuntimeData runtimeData)
     {
         DataManager.Instance.SaveRuntimeData(runtimeData);
@@ -322,59 +401,14 @@ public abstract class BaseStage : MonoBehaviour
 
 ---
 
-### 3. 커스텀 필드 기반 확장 가능한 공용 인벤토리 시스템
+## 3. 공용 인벤토리 시스템
 
-#### 개요
-5개 게임이 각자 다른 아이템 속성을 가지면서도 **하나의 공통 인벤토리 시스템**을 사용할 수 있도록 설계한 시스템입니다. `IItemable` 인터페이스로 아이템의 공통 계약을 정의하고, `Dictionary<string, string>` 기반의 커스텀 필드로 게임별 고유 속성을 확장합니다.
-
-#### 시스템 구조
-```
-IItemStaticData (게임별 시트 데이터)
-    ↓ ToItemData()
-LUPItemData (공통 아이템 데이터)
-  ├─ 필수 필드: ItemID, ItemName, ItemType, MaxStackSize, Icon, ...
-  └─ 커스텀 필드: Dictionary<string, string> (게임별 확장)
-    ↓ ItemManager.LoadAllItems()
-Dictionary<int, LUPItemData> (전역 아이템 DB)
-    ↓
-Inventory (BaseRuntimeData 상속)
-  ├─ Dictionary<string, InventorySlot> (런타임 슬롯 관리)
-  ├─ ISerializationCallbackReceiver (JSON 직렬화 호환)
-  └─ 이벤트: OnItemAdded, OnItemRemoved, OnItemUsed
-    ↓
-InventoryManager (게임별 인벤토리 키 기반 관리)
-```
-
-#### 기술적 특징
-- **IItemable 인터페이스** : 아이템의 공통 계약(ID, 이름, 타입, 스택, 아이콘, 사용 가능 여부)을 정의하면서, `GetInt()`, `GetFloat()`, `GetString()`, `GetBool()` 메서드로 게임별 커스텀 속성에 타입 안전하게 접근합니다.
-- **ISerializationCallbackReceiver** : Unity의 `JsonUtility`는 `Dictionary`를 직렬화하지 못하므로, `OnBeforeSerialize`에서 `Dictionary<string, InventorySlot>` → `List<InventorySlotData>`로 변환하고, `InitializeFromJson`에서 다시 복원하는 구조로 JSON 호환성을 확보했습니다.
-- **ItemManager 리플렉션 로딩** : 여러 게임의 `BaseStaticDataLoader`에서 `DataList` 필드를 리플렉션으로 접근하여, `IItemStaticData`를 구현한 데이터만 선별적으로 `LUPItemData`로 변환합니다. 동일 ID 아이템은 `MergeWith()`로 커스텀 필드를 병합합니다.
-- **스택 관리** : 동일 아이템이 이미 존재하면 스택 수량을 증가시키고, 최대 스택 초과 시 새 슬롯을 자동 생성합니다. 슬롯 키는 `{ItemID}_{counter}` 형태로 고유성을 보장합니다.
-- **이벤트 기반 알림** : `OnItemAdded`, `OnItemRemoved`, `OnItemUsed` 이벤트로 UI나 퀘스트 시스템이 인벤토리 변경을 구독할 수 있습니다.
+### LUPItemData - 필수 필드 + 커스텀 필드
 
 <details>
-<summary><b>🔍 코드 — IItemable & LUPItemData 커스텀 필드</b></summary>
+<summary><b>LUPItemData</b></summary>
 
 ```csharp
-public interface IItemable
-{
-    int ItemID { get; }
-    string ItemName { get; }
-    LUP.Define.ItemType Type { get; }
-    int MaxStackSize { get; }
-    Sprite Icon { get; }
-    string Description { get; }
-    bool IsUsable { get; }
-    void OnUse();
-
-    // 커스텀 필드 접근 — 게임별 고유 속성을 타입 안전하게 조회
-    int GetInt(string fieldName, int defaultValue = 0);
-    float GetFloat(string fieldName, float defaultValue = 0f);
-    string GetString(string fieldName, string defaultValue = "");
-    bool GetBool(string fieldName, bool defaultValue = false);
-    bool HasCustomField(string fieldName);
-}
-
 [System.Serializable]
 public class LUPItemData : IItemable
 {
@@ -382,11 +416,28 @@ public class LUPItemData : IItemable
     [SerializeField] private int itemID;
     [SerializeField] private string itemName;
     [SerializeField] private Define.ItemType itemType;
+    [SerializeField] private string iconPath = "";
     [SerializeField] private int maxStackSize = 1;
+    [SerializeField] private bool isUsable = false;
+    [SerializeField] private string description = "";
+
+    [System.NonSerialized] private Sprite _iconCache;
 
     // 게임별 확장 필드 — Dictionary로 자유롭게 추가
     [System.NonSerialized]
     private Dictionary<string, string> customFields = new Dictionary<string, string>();
+    [SerializeField]
+    private List<CustomField> serializedCustomFields = new List<CustomField>();
+
+    public Sprite Icon
+    {
+        get
+        {
+            if (_iconCache == null && !string.IsNullOrEmpty(iconPath))
+                _iconCache = Resources.Load<Sprite>(iconPath);
+            return _iconCache;
+        }
+    }
 
     // 타입 안전 접근자
     public int GetInt(string fieldName, int defaultValue = 0)
@@ -396,32 +447,108 @@ public class LUPItemData : IItemable
         return defaultValue;
     }
 
-    // 다른 로더에서 온 동일 ID 아이템의 커스텀 필드 병합
+    public float GetFloat(string fieldName, float defaultValue = 0f)
+    {
+        if (customFields.TryGetValue(fieldName, out string value))
+            return float.TryParse(value, out float result) ? result : defaultValue;
+        return defaultValue;
+    }
+
+    public string GetString(string fieldName, string defaultValue = "")
+    {
+        return customFields.TryGetValue(fieldName, out string value) ? value : defaultValue;
+    }
+
+    public bool GetBool(string fieldName, bool defaultValue = false)
+    {
+        if (customFields.TryGetValue(fieldName, out string value))
+            return bool.TryParse(value, out bool result) ? result : defaultValue;
+        return defaultValue;
+    }
+
+    // 동일 ID 아이템의 커스텀 필드 병합
     public void MergeWith(LUPItemData other)
     {
         if (other?.customFields == null) return;
+        if (customFields == null) customFields = new Dictionary<string, string>();
+
         foreach (var kvp in other.customFields)
         {
             if (!customFields.ContainsKey(kvp.Key) || string.IsNullOrEmpty(customFields[kvp.Key]))
                 customFields[kvp.Key] = kvp.Value;
         }
+        SyncToSerializedList();
     }
 }
 ```
 </details>
 
+### ItemManager - 리플렉션 기반 멀티 게임 아이템 로딩
+
 <details>
-<summary><b>🔍 코드 — Inventory JSON 직렬화 (ISerializationCallbackReceiver)</b></summary>
+<summary><b>ItemManager::LoadAllItems</b></summary>
+
+```csharp
+public class ItemManager : Singleton<ItemManager>
+{
+    [SerializeField] private List<BaseStaticDataLoader> loaders = new List<BaseStaticDataLoader>();
+    private Dictionary<int, LUPItemData> itemDatabase = new Dictionary<int, LUPItemData>();
+
+    public IEnumerator LoadAllItems()
+    {
+        itemDatabase.Clear();
+
+        foreach (var loader in loaders)
+        {
+            if (loader == null) continue;
+
+            // 리플렉션으로 DataList 필드 접근
+            var dataListField = loader.GetType().GetField("DataList");
+            if (dataListField == null) continue;
+
+            var dataList = dataListField.GetValue(loader) as System.Collections.IList;
+            if (dataList == null || dataList.Count == 0) continue;
+
+            foreach (var staticData in dataList)
+            {
+                // IItemStaticData 인터페이스 구현 여부 확인
+                if (staticData is IItemStaticData itemStaticData)
+                {
+                    var itemData = itemStaticData.ToItemData();
+
+                    // 같은 ID 아이템이 이미 있으면 커스텀 필드 병합
+                    if (itemDatabase.ContainsKey(itemData.ItemID))
+                        itemDatabase[itemData.ItemID].MergeWith(itemData);
+                    else
+                        itemDatabase[itemData.ItemID] = itemData;
+                }
+            }
+            yield return null;  // 프레임 분산
+        }
+    }
+
+    public IItemable GetItem(int itemID)
+    {
+        return itemDatabase.TryGetValue(itemID, out LUPItemData item) ? item : null;
+    }
+}
+```
+</details>
+
+### Inventory - ISerializationCallbackReceiver로 Dictionary ↔ List 변환
+
+<details>
+<summary><b>Inventory</b></summary>
 
 ```csharp
 [Serializable]
 public class Inventory : BaseRuntimeData, ISerializationCallbackReceiver
 {
-    // JSON 직렬화용 — JsonUtility가 Dictionary를 지원하지 않으므로 List로 변환
+    // JSON 직렬화용 — JsonUtility가 Dictionary 미지원
     [SerializeField]
     private List<InventorySlotData> _serializedSlots = new List<InventorySlotData>();
 
-    // 런타임 사용 — O(1) 조회를 위한 Dictionary
+    // 런타임 사용 — O(1) 조회
     [System.NonSerialized]
     private Dictionary<string, InventorySlot> slots;
 
@@ -429,11 +556,17 @@ public class Inventory : BaseRuntimeData, ISerializationCallbackReceiver
     public event Action<IItemable, int> OnItemRemoved;
     public event Action<IItemable> OnItemUsed;
 
-    // 직렬화 직전: Dictionary → List 변환
+    // 직렬화 직전: Dictionary → List
     public void OnBeforeSerialize()
+    {
+        SyncToSerializedList();
+    }
+
+    private void SyncToSerializedList()
     {
         _serializedSlots.Clear();
         if (slots == null) return;
+
         foreach (var kvp in slots)
         {
             _serializedSlots.Add(new InventorySlotData
@@ -445,79 +578,79 @@ public class Inventory : BaseRuntimeData, ISerializationCallbackReceiver
         }
     }
 
-    // JSON 로드 후: List → Dictionary 복원 (ItemManager에서 아이템 참조 재연결)
+    // JSON 로드 후: List → Dictionary 복원 (ItemManager에서 참조 재연결)
     public void InitializeFromJson()
     {
         slots = new Dictionary<string, InventorySlot>();
+
         foreach (var slotData in _serializedSlots)
         {
+            if (slotData == null || slotData.itemID == 0) continue;
+
             IItemable item = ItemManager.Instance.GetItem(slotData.itemID);
             if (item != null)
                 slots[slotData.slotKey] = new InventorySlot(item, slotData.quantity);
         }
     }
-
-    public bool AddItem(IItemable item, int quantity = 1)
-    {
-        // 1단계: 스택 가능한 기존 슬롯 탐색
-        InventorySlot stackableSlot = null;
-        foreach (var slot in slots.Values)
-        {
-            if (slot.Item.ItemID == item.ItemID && slot.CanStack)
-            { stackableSlot = slot; break; }
-        }
-
-        if (stackableSlot != null)
-        {
-            if (stackableSlot.TryAddQuantity(quantity))
-            {
-                OnItemAdded?.Invoke(item, quantity);
-                NotifyValueChanged(); // → BaseRuntimeData 자동 저장 트리거
-                return true;
-            }
-        }
-
-        // 2단계: 새 슬롯 생성
-        string slotKey = GenerateSlotKey(item.ItemID);
-        slots[slotKey] = new InventorySlot(item, quantity);
-        OnItemAdded?.Invoke(item, quantity);
-        NotifyValueChanged();
-        return true;
-    }
 }
 ```
 </details>
 
----
+### InventoryManager - 키 기반 인벤토리 관리
 
-### 4. Pull Request 관리
+<details>
+<summary><b>InventoryManager</b></summary>
 
-#### 개요
-13명의 프로그래머가 동시에 작업하는 환경에서 코드 품질을 유지하고 충돌을 최소화하기 위해 Fork 기반의 PR 워크플로우를 운영했습니다.
+```csharp
+public class InventoryManager : Singleton<InventoryManager>
+{
+    private Dictionary<string, Inventory> inventories = new Dictionary<string, Inventory>();
 
-#### 수행 내용
-- **코드 리뷰** : 모든 PR에 대해 코드 리뷰를 수행하여 프레임워크 규약 준수 여부와 코드 품질을 검증했습니다.
-- **머지 전략** : 각 게임팀의 작업이 서로 충돌하지 않도록 브랜치 전략을 수립하고, 충돌 발생 시 해결을 지원했습니다.
-- **시스템 사용 가이드** : 프레임워크 시스템(데이터 연동, 인벤토리, Stage 등)의 사용법을 문서화하여 팀원들에게 제공했습니다.
+    public void RegisterInventory(string inventoryKey, Inventory inventory)
+    {
+        inventories[inventoryKey] = inventory;
+    }
 
-- [Project LUP 프레임워크 사용 가이드 (Notion)](https://www.notion.so/Project-LUP-299894b38b10818bac41e103ee63d3a9)
-- [인벤토리 시스템 문서 (Notion)](https://www.notion.so/LUP-2c0894b38b108039a1fbf7eaafc7e50d)
+    public Inventory GetInventory(string inventoryKey)
+    {
+        return inventories.TryGetValue(inventoryKey, out Inventory inventory) ? inventory : null;
+    }
 
-## 🔧 트러블슈팅
-### JsonUtility의 Dictionary 미지원으로 인한 인벤토리 직렬화 문제
-인벤토리 시스템을 저장/로드하는 과정에서, `Dictionary<string, InventorySlot>`이 `JsonUtility.ToJson()`에서 빈 객체로 직렬화되는 문제를 발견했습니다.
-원인을 분석한 결과, Unity의 `JsonUtility`는 `Dictionary` 타입을 직렬화하지 않는다는 것을 확인했습니다.
-이를 해결하기 위해 `ISerializationCallbackReceiver` 인터페이스를 구현하여, Dictionary를 List로 변환하고, 로드 시 `ItemManager`를 통해 아이템 참조를 재연결하며 Dictionary를 복원하는 2단계 직렬화 구조를 설계했습니다.
-이 과정에서 "처음부터 List만 사용하면 되지 않았을까?"라는 의문이 들었으나, 런타임에서 아이템 조회/추가/삭제의 빈도가 높아 `O(1)` 접근이 가능한 Dictionary의 사용을 유지하기로 결정했습니다.
-대신, 직렬화 시에만 List로 변환하여 `JsonUtility` 호환성과 런타임 성능을 모두 확보하는 구조를 채택했습니다.
+    public Inventory LoadOrCreateInventory(string inventoryKey, string filename)
+    {
+        Inventory inventory;
 
-### 5개 게임의 아이템 속성 차이로 인한 인벤토리 확장성 문제
-공용 인벤토리 시스템을 설계하던 중, 각 게임의 아이템이 서로 다른 고유 속성을 가지고 있어 하나의 아이템 클래스로 통합할 수 없는 문제에 직면했습니다.
-처음에는 게임별 아이템 클래스를 각각 만드는 방안을 고려했으나, 이 경우 인벤토리 시스템이 게임별 타입에 종속되어 공용성을 잃게 됩니다.
-이를 해결하기 위해 **필수 필드 + 커스텀 필드 분리 구조**를 도입했습니다. `LUPItemData`에 모든 게임이 공통으로 사용하는 필드(ID, 이름, 타입, 스택)를 정의하고, 게임별 고유 속성은 `Dictionary<string, string>` 형태의 커스텀 필드에 저장합니다.
-또한, `ICustomFieldSupport` 인터페이스를 통해 Google Sheets에서 `[Column]`으로 매핑되지 않은 나머지 컬럼들이 자동으로 커스텀 필드에 수집되도록 하여, **시트에 새 컬럼을 추가해도 프레임워크 코드 수정 없이 데이터가 확장**되는 구조를 완성했습니다.
+        if (JsonDataHelper.FileExists(filename))
+        {
+            inventory = JsonDataHelper.LoadData<Inventory>(filename);
+            if (inventory != null)
+            {
+                inventory.filename = filename;
+                inventory.InitializeFromJson();  // Dictionary 복원
+            }
+            else
+            {
+                inventory = new Inventory();
+                inventory.filename = filename;
+            }
+        }
+        else
+        {
+            inventory = new Inventory();
+            inventory.filename = filename;
+        }
 
-### 에디터 환경에서의 코루틴 실행 불가 문제
-데이터 연동 시스템을 구현하던 중, 에디터의 커스텀 인스펙터에서 "데이터 읽기" 버튼을 클릭했을 때 `UnityWebRequest` 기반 코루틴이 실행되지 않는 문제를 발견했습니다.
-원인을 분석한 결과, `StartCoroutine`은 `MonoBehaviour`의 `Update` 루프에 의존하는데, 에디터 인스펙터 컨텍스트에서는 게임 루프가 동작하지 않아 코루틴이 진행되지 않는 것을 확인했습니다.
-이를 해결하기 위해 `async/await` 패턴으로 `IEnumerator`를 래핑하는 `ProcessCoroutine` 메서드를 구현했습니다. 이 메서드는 `MoveNext()`로 코루틴을 수동 진행하면서, `UnityWebRequestAsyncOperation`이 반환될 경우 `isDone`을 폴링하는 방식으로 비동기 웹 요청을 처리합니다. 중첩된 코루틴도 재귀적으로 처리하여 어떤 깊이의 코루틴도 에디터에서 정상 동작하도록 했습니다.
+        RegisterInventory(inventoryKey, inventory);
+        return inventory;
+    }
+
+    public void SaveAllInventories()
+    {
+        foreach (var kvp in inventories)
+        {
+            if (kvp.Value != null) kvp.Value.SaveData();
+        }
+    }
+}
+```
+</details>
